@@ -34,13 +34,13 @@ class ReviewCrawler:
         # TODO: finish proper UUID for each review
         return {
             'id': review_id,
-            'author': hash(review_instance['author']['steamid']),
+            'author': hash(review_instance['author']),
             'date': review_instance['timestamp_created'],
             'hours': review_instance['author']['playtime_at_review'],
             'content': review_instance['review'],
             'comments': review_instance['comment_count'],
             'source': self.source,
-            'helpful': review_instance['weighted_vote_score'],
+            'helpful': review_instance['votes_up'],
             'funny': review_instance['votes_funny'],
             'recommended': review_instance['voted_up'],
             'franchise': self.franchise,
