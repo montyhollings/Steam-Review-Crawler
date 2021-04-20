@@ -1,6 +1,6 @@
 import requests
 import json
-
+import math
 
 class ReviewCrawler:
     def __init__(self, gamename, franchise):
@@ -8,12 +8,24 @@ class ReviewCrawler:
         # Not sure if you should be able to change appId by input etc
         self.gameName = gamename
         self.franchise = franchise
+        self.total_review_count = 0
+        self.total_review_batches = 0
         self.formatted_reviews = {}
         self.batch_reviews = {}
         self.source = "steam"
         self.appId = 1382330
 
-    def get_reviews(self):
+    def get_total_review_count(self, request_parameters = False):
+        # TODO: accept date parameters
+        response = requests.get(
+            f'https://store.steampowered.com/appreviews/{self.appId}?json=1&num_per_page=1')
+        self.total_review_count = response.json()['query_summary']['total_reviews']
+        self.total_review_batches = math.ceil(self.total_review_count / 100)
+
+    def initiate_crawler(self):
+        # Get total amount of reviews so we know how many to loop over:
+        self.get_total_review_count()
+
         # Send request, using our appID to pull back 100 reviews
         reviews_response = requests.get(
             f'https://store.steampowered.com/appreviews/{self.appId}?json=1&num_per_page=100')
@@ -34,7 +46,7 @@ class ReviewCrawler:
         # TODO: finish proper UUID for each review
         return {
             'id': review_id,
-            'author': hash(review_instance['author']),
+            'author': hash(review_instance['author']['steamid']),
             'date': review_instance['timestamp_created'],
             'hours': review_instance['author']['playtime_at_review'],
             'content': review_instance['review'],
@@ -59,6 +71,6 @@ franchise = "Persona 5"
 # Create a new ReviewCrawler Instance, passing our two hardcoded variables
 NewCrawler = ReviewCrawler(game_name, franchise)
 # Request the reviews, process & format, then display to the users console
-NewCrawler.get_reviews()
+NewCrawler.initiate_crawler()
 NewCrawler.process_reviews()
 NewCrawler.display_reviews()
