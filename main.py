@@ -8,6 +8,14 @@ from slugify import slugify
 import time
 
 
+def initialise_crawler(game_name, franchise):
+  print('Starting Crawler...')
+  NewCrawler = ReviewCrawler(game_name, franchise)
+  print('Setting up crawler configuration...')
+  NewCrawler.setup_parameters()
+  print('Crawling...')
+  NewCrawler.get_reviews()
+
 class ReviewCrawler:
     def __init__(self, gamename, franchise, appid=1382330):
         # Hard code source as per spec,
@@ -27,7 +35,7 @@ class ReviewCrawler:
         self.appId = appid
         self.output_dir = os.getcwd()
 
-    def setup_parameters(self, language="english", date="3650", per_page="100", review_type="all", purchase_type="all"):
+    def setup_parameters(self, date="3650", language="english", per_page="100", review_type="all", purchase_type="all"):
         # Setup parameters for the requests
         self.parameters = {
             "filter": "all",
@@ -95,7 +103,6 @@ class ReviewCrawler:
 
     def format_review(self, review_instance):
         # Return review in desired format
-        # TODO: finish author hash instead of current hack
         # TODO: finish proper UUID for each review
         return {
             'id': self.review_counter,
@@ -124,14 +131,6 @@ class ReviewCrawler:
 game_name = "Persona 5"
 franchise = "Persona 5"
 
-# Create a new ReviewCrawler Instance, passing our two hardcoded variables
-NewCrawler = ReviewCrawler(game_name, franchise)
-# Steam reviews came out in 2013. Ill be safe and round up so that's 3650 days
-# Setting up temp variables outside of the class
-day_range = 3650
-language = "english"
-num_per_page = 100
-# Create new crawler instance
-# Display reviews
-NewCrawler.setup_parameters(language, day_range, num_per_page)
-NewCrawler.get_reviews()
+initialise_crawler(game_name, franchise)
+
+
