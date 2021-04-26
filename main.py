@@ -8,21 +8,6 @@ from slugify import slugify
 import datetime
 import time
 
-def pretty_print_POST(req):
-    """
-    At this point it is completely built and ready
-    to be fired; it is "prepared".
-
-    However pay attention at the formatting used in
-    this function because it is programmed to be pretty
-    printed and may differ from the actual request.
-    """
-    print('{}\n{}\r\n{}\r\n\r\n{}'.format(
-        '-----------START-----------',
-        req.method + ' ' + req.url,
-        '\r\n'.join('{}: {}'.format(k, v) for k, v in req.headers.items()),
-        req.body,
-    ))
 
 def setup_date_filter():
     date_valid = False
@@ -34,7 +19,6 @@ def setup_date_filter():
         except ValueError:
             print('Incorrect please try again, e.g 2001-01-01')
     todays_date = datetime.datetime.now()
-    print((todays_date - from_date).days)
     return (todays_date - from_date).days
 
 
@@ -65,6 +49,7 @@ class ReviewCrawler:
         self.cursor = "*"
         self.source = "steam"
         self.appId = appid
+
 
     def setup_parameters(self, language="english", per_page="100", review_type="all", purchase_type="all"):
         # Setup parameters for the requests
@@ -170,6 +155,7 @@ class ReviewCrawler:
 game_name = input('Please enter the name of the game you are crawling: ')
 franchise = input('Please enter the name of the game you are crawling: ')
 filter_by_date = input('If you wish to enter by date, please enter Y or y, else hit enter: ')
+
 if(filter_by_date == "Y" or filter_by_date == "y"):
     date_range = setup_date_filter()
 else:
