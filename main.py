@@ -1,164 +1,129 @@
-import requests
 import json
 import math
-import urllib.parse
-import copy
-import os
-from slugify import slugify
-import datetime
-import time
+import requests
+import itertools
 
 
-def setup_date_filter():
-    date_valid = False
-    while date_valid == False:
-        filter_from = input('Please enter the date you wish to filter from in format [yyyy-mm-dd]: ')
-        try:
-            from_date = datetime.datetime.strptime(filter_from, '%Y-%m-%d')
-            date_valid = True
-        except ValueError:
-            print('Incorrect please try again, e.g 2001-01-01')
-    todays_date = datetime.datetime.now()
-    return (todays_date - from_date).days
+# Review chunking function
+
+def chunks(data, SIZE=5000):
+    it = iter(data)
+    for i in range(0, len(data), SIZE):
+        yield {k: data[k] for k in itertools.islice(it, SIZE)}
 
 
-def initialise_crawler(game_name="Persona 5", franchise="Persona 5", filter_range=30000):
+# Startup function which creates the new Crawler object
+# Then actives the crawler
+def initialise_crawler(game_name="Persona 5", franchise="Persona 5"):
     print('Starting Crawler...')
-    NewCrawler = ReviewCrawler(game_name, franchise, filter_range)
-    print('Setting up crawler configuration...')
-    NewCrawler.setup_parameters()
+    NewCrawler = ReviewCrawler(game_name, franchise)
     print('Crawling...')
-    # NewCrawler.get_reviews()
+    NewCrawler.get_reviews()
 
 
 class ReviewCrawler:
-    def __init__(self, gamename, franchise, filter_range, appid=1382330):
-        # Hard code source as per spec,
-        # Not sure if you should be able to change appId by input etc
-        self.gameName = gamename
-        self.franchise = franchise
-        self.filter_range = filter_range
-        self.total_review_count = 0
-        self.request_loop_count = 0
-        self.file_count = 0
-        self.review_counter = 0
-        self.formatted_reviews = {}
-        self.parameters = {}
-        self.reviews = {}
-        self.number_in_batch = 0
-        self.cursor = "*"
-        self.source = "steam"
-        self.appId = appid
-
-
-    def setup_parameters(self, language="english", per_page="100", review_type="all", purchase_type="all"):
-        # Setup parameters for the requests
-        self.parameters = {
-            "filter": "all",
-            "language": language,
-            "day_range": self.filter_range,
-            "cursor": self.cursor,
-            "review_type": review_type,
-            "purchase_type": purchase_type,
-            "num_per_page": per_page,
-        }
-        # Get the total review count so we know the loop indexes
-        self.get_total_review_count()
-
-    def get_total_review_count(self):
-        # TODO: accept date parameters
-        # Overwrite the num per page to 1, this will save speed by making the response much smaller
-        temp_parameters = copy.copy(self.parameters)
-        print(self.parameters)
-        temp_parameters['num_per_page'] = "1"
-        response = requests.Request("GET",
-            f'https://store.steampowered.com/appreviews/{self.appId}?json=1', data=temp_parameters)
-        prepared = response.prepare()
-        pretty_print_POST(prepared)
-        # Grab the total number of reviews in the response
-        # Divide that number by the amount per page and round up the result to get the number of batches needed
-        # self.total_review_count = int(response.json()['query_summary']['total_reviews'])
-        # self.request_loop_count = math.floor(self.total_review_count / 100)
-        # self.file_count = math.ceil(self.total_review_count / 200)
-        # print('total reviews: ' + str(self.total_review_count))
+    def __init__(self, game_name, franchise_name, date=30000, app_id=1382330, language="english", per_page=100,
+                 review_type="all",
+                 purchase_type="all", reviews_per_file=5000):
+        self.language = language
+        self.date = date
+        self.source = 'steam'
+        self.app_id = app_id
+        self.per_page = per_page
+        self.review_type = review_type
+        self.game_name = game_name
+        self.total_reviews = 0
+        self.franchise_name = franchise_name
+        self.purchase_type = purchase_type
+        self.current_review_id = 0
+        self.reviews_per_file = reviews_per_file
 
     def get_reviews(self):
+        reviews = []
+        # Send the first request, load the reviews to memory
+        response = self.get_review_batch()
+        reviews += response['reviews']
+        # Get total reviews and calculate total batches to loop over
+        self.total_reviews = response['query_summary']['total_reviews']
+        total_batches = self.get_total_batches(response)
+        # Set second cursor from the response
+        cursor = response['cursor']
 
-        for i in range(self.request_loop_count):
-            print('------ LOOP ------ ')
-            print('index: ' + str(self.review_counter))
-            print('old_cursor: ' + str(self.parameters['cursor']))
-            print('pre-add reviews=: ' + str(self.reviews.keys()))
-            if i == 0:
-                slug = "*"
-            else:
-                slug = slugify(self.parameters['cursor'])
+        # Loop over total batch count, each time setting the cursor to the the one sent by the response
+        # Save reviews to memory
+        for index in range(total_batches):
+            batch_response = self.get_review_batch(cursor)
+            reviews += batch_response['reviews']
+            cursor = batch_response['cursor']
 
-            if slug in self.reviews:
-                print('cursor: ' + str(self.parameters['cursor'] + ' is a dupe'))
-                self.parameters['cursor'] = str(urllib.parse.quote(self.reviews[slug]['cursor']))
-                continue
+        print('Total expected reviews: ' + str(response['query_summary']['total_reviews']))
+        print('Resultant reviews: ' + str(len(reviews)))
 
-            response = self.send_request()
+        # Format, then save the reviews to storage
+        formatted_reviews = self.format_reviews(reviews)
+        self.save_reviews(formatted_reviews, self.reviews_per_file)
 
-            json_response = response.json()
-            print('raw_cursor: ' + str(json_response['cursor']))
-            self.parameters['cursor'] = str(urllib.parse.quote(json_response['cursor']))
-            print('encoded_cursor: ' + str(self.parameters['cursor']))
-            print('slug: ' + str(slug))
-            self.reviews[slug] = json_response
-            print('adding: ' + str(slug) + ' to self.reviews')
-            self.review_counter += 1
-            self.request_loop_count -= 1
-            print(self.request_loop_count)
-            time.sleep(1.5)
+    def get_total_batches(self, response):
+        # Subtracting one from the rounded division as arrays start at 0
+        return math.ceil(response['query_summary']['total_reviews'] / self.per_page) - 1
 
-        # LOOP ENDS ALL REVIEWS ADDED TO SELF.REVIEWS
-        for key, value in self.reviews.items():
-            for x in value['reviews']:
-                self.formatted_reviews[self.review_counter] = self.format_review(x)
-                self.review_counter += 1
+    def get_review_batch(self, cursor='*'):
+        # Set cursor to * on the first call to signal the start of the dataset
+        response = requests.get(
+            f'https://store.steampowered.com/appreviews/{self.app_id}?json=1', params={
+                "filter": "recent",
+                "language": self.language,
+                "day_range": self.date,
+                "cursor": cursor,
+                "review_type": self.review_type,
+                "purchase_type": self.purchase_type,
+                "num_per_page": self.per_page,
+            })
 
-        self.display_reviews()
-        print(' LOOPS: ' + str(self.request_loop_count))
-        print(str(len(self.reviews)))
+        return response.json()
 
-    def send_request(self):
-        return requests.get(
-            f'https://store.steampowered.com/appreviews/{self.appId}?json=1&', params=self.parameters)
+    def format_reviews(self, reviews):
+        # Loop over every review, providing them a unique ID
+        # Set formatted reviews dict key to be the unique id
+        # Hash author due to privacy
+        review_id = 1
+        formatted_reviews = {}
+        for item in reviews:
+            formatted_reviews[review_id] = {
+                'id': self.current_review_id,
+                'author': hash(item['author']['steamid']),
+                'date': item['timestamp_created'],
+                'hours': item['author']['playtime_at_review'],
+                'content': item['review'],
+                'comments': item['comment_count'],
+                'source': self.source,
+                'helpful': item['votes_up'],
+                'funny': item['votes_funny'],
+                'recommended': item['voted_up'],
+                'franchise': self.franchise_name,
+                'gameName': self.game_name,
+            }
+            review_id += 1
+        return formatted_reviews
 
-    def format_review(self, review_instance):
-        # Return review in desired format
-        # TODO: finish proper UUID for each review
-        return {
-            'id': self.review_counter,
-            'author': hash(review_instance['author']['steamid']),
-            'date': review_instance['timestamp_created'],
-            'hours': review_instance['author']['playtime_at_review'],
-            'content': review_instance['review'],
-            'comments': review_instance['comment_count'],
-            'source': self.source,
-            'helpful': review_instance['votes_up'],
-            'funny': review_instance['votes_funny'],
-            'recommended': review_instance['voted_up'],
-            'franchise': self.franchise,
-            'gameName': self.gameName,
-        }
+    @staticmethod
+    def save_reviews(reviews, reviews_per_file):
+        # As we want a maximum of 5k reviews per file we need to
+        # split the dictionary of reviews into groups of up to 5k
+        list_of_dicts = [item for item in chunks(reviews, reviews_per_file)]
 
-    def display_reviews(self):
-        # Print out each review to file
-        with open('data.json', 'w') as outfile:
-            json.dump(self.formatted_reviews, outfile, indent=4)
+        # Save the file name simply with a number prefix to represent order
+        # Loop over each group of 5k reviews, saving them to a file
+        file_counter = 1
+        for batch in list_of_dicts:
+            with open(f'reviews-{file_counter}.json', 'w') as outfile:
+                json.dump(batch, outfile, indent=4)
+                file_counter += 1
 
 
-# Hard core game name & franchise for now to something temporary
+# Script start
+# Take gamename and franchise inputs, provide them to the initialisation function
+# Start crawler
 game_name = input('Please enter the name of the game you are crawling: ')
-franchise = input('Please enter the name of the game you are crawling: ')
-filter_by_date = input('If you wish to enter by date, please enter Y or y, else hit enter: ')
-
-if(filter_by_date == "Y" or filter_by_date == "y"):
-    date_range = setup_date_filter()
-else:
-    date_range = None
-
-initialise_crawler(game_name, franchise, date_range)
+franchise = input('Please enter the franchise name of the game you are crawling: ')
+initialise_crawler(game_name, franchise)
